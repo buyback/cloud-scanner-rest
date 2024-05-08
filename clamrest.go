@@ -221,6 +221,27 @@ func waitForClamD(port string, times int) {
 	}
 }
 
+func testok(w http.ResponseWriter, r *http.Request) {
+	data := [] struct {
+        Name string
+        Age  int
+    } {
+        { "Richard Grayson", 24 },
+        { "Jason Todd", 23 },
+        { "Tim Drake", 22 },
+        { "Damian Wayne", 21 },
+    }
+
+    jsonInBytes, err := json.Marshal(data)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    w.Write(jsonInBytes)
+}
+
 func main() {
 
 	opts = make(map[string]string)
@@ -252,6 +273,7 @@ func main() {
 	http.HandleFunc("/scanHandlerBody", scanHandlerBody)
   	http.HandleFunc("/version", clamversion)
 	http.HandleFunc("/", home)
+	http.HandleFunc("/testok", testok)
 
 	// Prometheus metrics
 	http.Handle("/metrics", promhttp.HandlerFor(
