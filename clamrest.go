@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/rs/zerolog"
 )
 
 var opts map[string]string
@@ -41,7 +44,7 @@ func clamversion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	for version_string := range version {
 		if strings.HasPrefix(version_string.Raw, "ClamAV ") {
-			version_values := strings.Split(strings.Replace(version_string.Raw, "ClamAV ", "", 1),"/")
+			version_values := strings.Split(strings.Replace(version_string.Raw, "ClamAV ", "", 1), "/")
 			respJson := fmt.Sprintf("{ \"Clamav\": \"%s\" }", version_values[0])
 			if len(version_values) == 3 {
 				respJson = fmt.Sprintf("{ \"Clamav\": \"%s\", \"Signature\": \"%s\" , \"Signature_date\": \"%s\" }", version_values[0], version_values[1], version_values[2])
@@ -114,12 +117,23 @@ func scanPathHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, string(resJson))
 }
 
-//This is where the action happens.
+// This is where the action happens.
 func scanHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	//POST takes the uploaded file(s) and saves it to disk.
 	case "POST":
 		c := clamd.NewClamd(opts["CLAMD_PORT"])
+
+		// get parameter
+		param_userid := r.URL.Query().Get("userid")
+		param_module := r.URL.Query().Get("module")
+		param_applicationID := r.URL.Query().Get("applicationID")
+		param_directorate := r.URL.Query().Get("directorate")
+		param_url := r.URL.Query().Get("url")
+		param_selector := r.URL.Query().Get("selector")
+		fmt.Printf("Get parameter userid %v\n", param_userid)
+		fmt.Printf("Get parameter module %v\n", param_module)
+
 		//get the multipart reader for the request.
 		reader, err := r.MultipartReader()
 
@@ -145,12 +159,14 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 			response, err := c.ScanStream(part, abort)
 			for s := range response {
 				w.Header().Set("Content-Type", "application/json; charset=utf-8")
-				respJson := fmt.Sprintf("{ \"Status\": \"%s\", \"Description\": \"%s\" }", s.Status, s.Description)
+				respJson := fmt.Sprintf("{ \"Status\": \"%s\", \"Description\": \"%s\"}", s.Status, s.Description)
 				switch s.Status {
 				case clamd.RES_OK:
 					w.WriteHeader(http.StatusOK)
 				case clamd.RES_FOUND:
 					w.WriteHeader(http.StatusNotAcceptable)
+					// logging if virus is found
+					Logging(part.FileName(), param_userid, param_module, param_applicationID, param_directorate, param_url, param_selector, s.Status, s.Description)
 				case clamd.RES_ERROR:
 					w.WriteHeader(http.StatusBadRequest)
 				case clamd.RES_PARSE_ERROR:
@@ -162,6 +178,7 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 				fmt.Printf(time.Now().Format(time.RFC3339)+" Scan result for: %v, %v\n", part.FileName(), s)
 			}
 			fmt.Printf(time.Now().Format(time.RFC3339) + " Finished scanning: " + part.FileName() + "\n")
+
 		}
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -222,24 +239,63 @@ func waitForClamD(port string, times int) {
 }
 
 func testok(w http.ResponseWriter, r *http.Request) {
-	data := [] struct {
-        Name string
-        Age  int
-    } {
-        { "Richard Grayson", 24 },
-        { "Jason Todd", 23 },
-        { "Tim Drake", 22 },
-        { "Damian Wayne", 21 },
-    }
+	data := []struct {
+		Name string
+		Age  int
+	}{
+		{"Richard Grayson", 24},
+	}
 
-    jsonInBytes, err := json.Marshal(data)
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
+	jsonInBytes, err := json.Marshal(data)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    w.Write(jsonInBytes)
+	os.MkdirAll("/var/log/cloud-scanner", os.ModePerm)
+	os.WriteFile("/var/log/cloud-scanner/david.txt", []byte("hello world"), fs.ModePerm)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(jsonInBytes)
+}
+
+var (
+	logger zerolog.Logger
+)
+
+func Logging(filename string, param_userid string, param_module string, param_applicationID string, param_directorate string, param_url string, param_selector string, responseStatus string, description string) {
+	t := time.Now()
+	hours := t.Hour()
+	err := os.Remove("path/to/file.format")
+	logName := "/var/log/cloud-scanner/cloud-scanner_" + strconv.Itoa(hours) + ".log"
+	os.MkdirAll("/var/log/cloud-scanner", os.ModePerm)
+
+	file, err := os.OpenFile(
+		logName,
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY,
+		0664,
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	defer file.Close()
+
+	// Build a logger with default fields
+	logger = zerolog.New(file).With().
+		Str("time", t.Format("2006-01-02 15:04:05")).
+		Str("filename", filename).
+		Str("userid", param_userid).
+		Str("module", param_module).
+		Str("directorate", param_directorate).
+		Str("url", param_url).
+		Str("selector", param_selector).
+		Str("status", responseStatus).
+		Str("description", description).
+		Logger()
+
+	logger.Info().
+		Msg("MALWARE FOUND")
 }
 
 func main() {
@@ -271,7 +327,7 @@ func main() {
 	http.HandleFunc("/scan", scanHandler)
 	http.HandleFunc("/scanPath", scanPathHandler)
 	http.HandleFunc("/scanHandlerBody", scanHandlerBody)
-  	http.HandleFunc("/version", clamversion)
+	http.HandleFunc("/version", clamversion)
 	http.HandleFunc("/", home)
 	http.HandleFunc("/testok", testok)
 
