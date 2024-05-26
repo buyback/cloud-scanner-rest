@@ -131,8 +131,8 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 		param_directorate := r.URL.Query().Get("directorate")
 		param_url := r.URL.Query().Get("url")
 		param_selector := r.URL.Query().Get("selector")
-		fmt.Printf("Get parameter userid %v\n", param_userid)
-		fmt.Printf("Get parameter module %v\n", param_module)
+		// fmt.Printf("Get parameter userid %v\n", param_userid)
+		// fmt.Printf("Get parameter module %v\n", param_module)
 
 		//get the multipart reader for the request.
 		reader, err := r.MultipartReader()
@@ -163,10 +163,10 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 				switch s.Status {
 				case clamd.RES_OK:
 					w.WriteHeader(http.StatusOK)
+					Logging(part.FileName(), param_userid, param_module, param_applicationID, param_directorate, param_url, param_selector, s.Status, s.Description, "OK")
 				case clamd.RES_FOUND:
 					w.WriteHeader(http.StatusNotAcceptable)
-					// logging if virus is found
-					Logging(part.FileName(), param_userid, param_module, param_applicationID, param_directorate, param_url, param_selector, s.Status, s.Description)
+					Logging(part.FileName(), param_userid, param_module, param_applicationID, param_directorate, param_url, param_selector, s.Status, s.Description, "FOUND")
 				case clamd.RES_ERROR:
 					w.WriteHeader(http.StatusBadRequest)
 				case clamd.RES_PARSE_ERROR:
@@ -263,13 +263,48 @@ var (
 	logger zerolog.Logger
 )
 
-func Logging(filename string, param_userid string, param_module string, param_applicationID string, param_directorate string, param_url string, param_selector string, responseStatus string, description string) {
-	t := time.Now()
-	hours := t.Hour()
-	err := os.Remove("path/to/file.format")
-	logName := "/var/log/cloud-scanner/cloud-scanner_" + strconv.Itoa(hours) + ".log"
-	os.MkdirAll("/var/log/cloud-scanner", os.ModePerm)
+func Logging(filename string, param_userid string, param_module string, param_applicationID string, param_directorate string, param_url string, param_selector string, responseStatus string, description string, message string) {
 
+	// variables
+	loc, _ := time.LoadLocation("Asia/Jakarta")
+	t := time.Now().In(loc)
+	current_hours := t.Hour()
+	var file_hours int
+	var current_file_name, logMessage string
+	dir := "/var/log/cloud-scanner/"
+	logName := "/var/log/cloud-scanner/cloud-scanner_" + strconv.Itoa(current_hours) + ".log"
+
+	// create directory
+	os.MkdirAll(dir, os.ModePerm)
+
+	// read directory
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "cloud-scanner") {
+			result := strings.Split(e.Name(), "_")
+			result_hour := strings.Split(result[1], ".")
+			file_hours, err = strconv.Atoi(result_hour[0])
+			current_file_name = e.Name()
+			fmt.Println(current_file_name)
+		}
+	}
+
+	// check if there is existing file
+	if _, err := os.Stat(logName); err == nil {
+		fmt.Printf("File exists")
+		// compare hour in existing file to current hour
+		// if !== then
+		if current_hours != file_hours {
+			os.Remove(dir + current_file_name)
+			fmt.Println("finish remove")
+		}
+	}
+
+	// create file
 	file, err := os.OpenFile(
 		logName,
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY,
@@ -294,8 +329,16 @@ func Logging(filename string, param_userid string, param_module string, param_ap
 		Str("description", description).
 		Logger()
 
+	if message == "OK" {
+		logMessage = "File is OK"
+	} else if message == "FOUND" {
+		logMessage = "Malware Found"
+	} else {
+		logMessage = ""
+	}
+
 	logger.Info().
-		Msg("MALWARE FOUND")
+		Msg(logMessage)
 }
 
 func main() {
