@@ -268,11 +268,12 @@ func Logging(filename string, param_userid string, param_module string, param_ap
 	// variables
 	loc, _ := time.LoadLocation("Asia/Jakarta")
 	t := time.Now().In(loc)
+	fmt.Println(t.Format("2006-01-02"))
 	current_hours := t.Hour()
 	var file_hours int
 	var current_file_name, logMessage string
 	dir := "/var/log/cloud-scanner/"
-	logName := "/var/log/cloud-scanner/cloud-scanner_" + strconv.Itoa(current_hours) + ".log"
+	logName := dir + "cloudscanner_" + t.Format("2006-01-02") + "_" + strconv.Itoa(current_hours) + ".log"
 
 	// create directory
 	os.MkdirAll(dir, os.ModePerm)
@@ -284,9 +285,9 @@ func Logging(filename string, param_userid string, param_module string, param_ap
 	}
 
 	for _, e := range entries {
-		if strings.Contains(e.Name(), "cloud-scanner") {
+		if strings.Contains(e.Name(), "cloudscanner") {
 			result := strings.Split(e.Name(), "_")
-			result_hour := strings.Split(result[1], ".")
+			result_hour := strings.Split(result[2], ".")
 			file_hours, err = strconv.Atoi(result_hour[0])
 			current_file_name = e.Name()
 			fmt.Println(current_file_name)
